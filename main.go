@@ -1,14 +1,17 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"os"
+	"strings"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/widget"
-	"fyne.io/systray"
 )
 
 var (
@@ -24,55 +27,59 @@ func main() {
 	w.SetMaster()
 	w.CenterOnScreen()
 
-	chatLog := widget.NewMultiLineEntry()
-	input := widget.NewEntry()
+	lgnLog := widget.NewEntry()
+	pswLog := widget.NewEntry()
 
-	sendBtn := widget.NewButton("send", func() {
-		msg := input.Text
-		if msg != "" {
+	//chatLog := widget.NewMultiLineEntry()
+	//input := widget.NewEntry()
+	loginContent := container.NewVBox()
+	loginBtn := widget.NewButton("Enter", func() {
+		lgn := lgnLog.Text
+		if lgn != "" {
 			//send msg
-			input.SetText("")
+			//input.SetText("")
 		} else {
-			dialog.ShowInformation("Error", "Please select a user and enter a message", w)
+			pswLog.SetText("")
+			dialog.ShowInformation("Error", "Enter login", w)
+		}
+		pswd := pswLog.Text
+		if pswd != "" {
+			//send msg
+			//input.SetText("")
+		} else {
+			pswLog.SetText("")
+			dialog.ShowInformation("Error", "Enter password", w)
 		}
 
+		err := ReceiveTokens(lgn, pswd)
+		if err != nil {
+			dialog.ShowInformation("Error", "Wrong login or password", w)
+			fmt.Println(err.Error())
+			pswLog.SetText("")
+		} else {
+			lgnLog.SetText("")
+			lgnLog.Hide()
+			pswLog.SetText("")
+			pswLog.Hide()
+			loginContent.Hide()
+		}
 	})
 
+	loginContent.Add(lgnLog)
+	loginContent.Add(pswLog)
+	loginContent.Add(loginBtn)
+
 	content := container.NewVBox(
-		chatLog,
-		input,
-		sendBtn,
+		loginContent,
+		//chatLog,
+		//input,
+		//lgnLog,
+		//pswLog,
+		//loginBtn,
 	)
 	w.SetContent(content)
 
-	go systray.Run(onReady, onExit)
-
-	//w.ShowAndRun()
-	a.Run()
-}
-
-func onReady() {
-	//systray.SetTitle("Chat")
-
-	mShow := systray.AddMenuItemCheckbox("Show", "Show chat window", false) //AddMenuItem("Show", "Show chat window")
-	mQuit := systray.AddMenuItemCheckbox("Quit", "Qiut app", false)         //AddMenuItem("Quit", "Qiut app")
-
-	go func() {
-		for {
-			select {
-			case <-mShow.ClickedCh:
-				w.Show()
-			case <-mQuit.ClickedCh:
-				systray.Quit()
-				a.Quit()
-				return
-			}
-		}
-	}()
-}
-
-func onExit() {
-
+	w.ShowAndRun()
 }
 
 func GetTemperature() ([]string, []string, error) {
@@ -90,4 +97,76 @@ func GetTemperature() ([]string, []string, error) {
 	}
 
 	return temps, hours, nil
+}
+
+func ReceiveTokens(lgn string, pswd string) error {
+	url := "http://localhost:8080/Login"
+	method := http.MethodPost
+
+	str := fmt.Sprintf(`{
+		"username": "%s",
+		"password": "%s"
+	}`, lgn, pswd)
+
+	payload := strings.NewReader(str)
+
+	cl := &http.Client{}
+	req, err := http.NewRequest(method, url, payload)
+	if err != nil {
+		return err
+	}
+	req.Header.Add("Content-Type", "application/json")
+
+	resp, err := cl.Do(req)
+
+	if err != nil {
+		return err
+	}
+
+	defer resp.Body.Close()
+
+	vars := make(map[string]interface{}, 0)
+	decoder := json.NewDecoder(resp.Body)
+	err = decoder.Decode(&vars)
+	if err != nil {
+		return err
+	}
+	if !vars["success"].(bool) {
+		return fmt.Errorf("Success false")
+	}
+
+	tkn := vars["refresh_token"]
+	err = CreateRefresh(tkn.(string))
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func CreateRefresh(refreshToken string) error {
+	file, err := os.Create("bin/refresh_token.txt")
+	if err != nil {
+		return fmt.Errorf("failed to create or open file: %v", err)
+	}
+	defer file.Close()
+	_, err = file.Write([]byte(refreshToken))
+	if err != nil {
+		return fmt.Errorf("failed to write in file: %v", err)
+	}
+
+	return nil
+}
+
+func CreateAccess(accessToken string) error {
+	file, err := os.Create("bin/access_token.txt")
+	if err != nil {
+		return fmt.Errorf("failed to create or open file: %v", err)
+	}
+	defer file.Close()
+	_, err = file.Write([]byte(accessToken))
+	if err != nil {
+		return fmt.Errorf("failed to write in file: %v", err)
+	}
+
+	return nil
 }

@@ -15,8 +15,10 @@ import (
 )
 
 var (
-	w fyne.Window
-	a fyne.App
+	w     fyne.Window
+	a     fyne.App
+	id    int
+	chats ChatInfo
 )
 
 func main() {
@@ -29,24 +31,19 @@ func main() {
 
 	lgnLog := widget.NewEntry()
 	pswLog := widget.NewEntry()
+	pswLog.Password = true
+	chatsContent := container.NewVBox()
+	chatsContent.Hide()
 
-	//chatLog := widget.NewMultiLineEntry()
-	//input := widget.NewEntry()
 	loginContent := container.NewVBox()
 	loginBtn := widget.NewButton("Enter", func() {
 		lgn := lgnLog.Text
-		if lgn != "" {
-			//send msg
-			//input.SetText("")
-		} else {
+		if lgn == "" {
 			pswLog.SetText("")
-			dialog.ShowInformation("Error", "Enter login", w)
 		}
+
 		pswd := pswLog.Text
-		if pswd != "" {
-			//send msg
-			//input.SetText("")
-		} else {
+		if pswd == "" {
 			pswLog.SetText("")
 			dialog.ShowInformation("Error", "Enter password", w)
 		}
@@ -62,15 +59,29 @@ func main() {
 			pswLog.SetText("")
 			pswLog.Hide()
 			loginContent.Hide()
+			chatsContent.Show()
+			res, err := GetChats()
+			if err != nil {
+				dialog.ShowInformation("Error", "failed get information about chats", w)
+				return
+			}
+			chats = *res
 		}
 	})
+
+	chatLog := widget.NewMultiLineEntry()
+	input := widget.NewEntry()
 
 	loginContent.Add(lgnLog)
 	loginContent.Add(pswLog)
 	loginContent.Add(loginBtn)
 
+	chatsContent.Add(chatLog)
+	chatsContent.Add(input)
+
 	content := container.NewVBox(
 		loginContent,
+		chatsContent,
 		//chatLog,
 		//input,
 		//lgnLog,
@@ -99,14 +110,14 @@ func GetTemperature() ([]string, []string, error) {
 	return temps, hours, nil
 }
 
-func ReceiveTokens(lgn string, pswd string) error {
+func ReceiveTokens(lgn string, pwd string) error {
 	url := "http://localhost:8080/Login"
 	method := http.MethodPost
 
 	str := fmt.Sprintf(`{
 		"username": "%s",
 		"password": "%s"
-	}`, lgn, pswd)
+	}`, lgn, pwd)
 
 	payload := strings.NewReader(str)
 
@@ -125,17 +136,18 @@ func ReceiveTokens(lgn string, pswd string) error {
 
 	defer resp.Body.Close()
 
-	vars := make(map[string]interface{}, 0)
+	variables := make(map[string]interface{}, 0)
 	decoder := json.NewDecoder(resp.Body)
-	err = decoder.Decode(&vars)
+	err = decoder.Decode(&variables)
 	if err != nil {
 		return err
 	}
-	if !vars["success"].(bool) {
+	if !variables["success"].(bool) {
 		return fmt.Errorf("Success false")
 	}
 
-	tkn := vars["refresh_token"]
+	tkn := variables["refresh_token"]
+	id = int(variables["user_id"].(float64))
 	err = CreateRefresh(tkn.(string))
 	if err != nil {
 		return err
@@ -169,4 +181,45 @@ func CreateAccess(accessToken string) error {
 	}
 
 	return nil
+}
+
+func GetChats() (*ChatInfo, error) {
+	url := "http://localhost:9091/chats"
+	method := http.MethodPost
+	fmt.Printf("id: %v\n", id)
+	str := fmt.Sprintf(`{
+		"user_id": %v
+	}`, id)
+
+	payload := strings.NewReader(str)
+
+	cl := &http.Client{}
+	req, err := http.NewRequest(method, url, payload)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Add("Content-Type", "application/json")
+
+	resp, err := cl.Do(req)
+
+	if err != nil {
+		return nil, err
+	}
+
+	defer resp.Body.Close()
+
+	var ch ChatInfo
+	decoder := json.NewDecoder(resp.Body)
+	err = decoder.Decode(&ch)
+	if err != nil {
+		fmt.Printf("err: %v\n", err)
+		return nil, err
+	}
+
+	if !ch.Success {
+		return nil, fmt.Errorf("failed get chats")
+	}
+
+	fmt.Printf("chats: %v\n", ch)
+	return &ch, nil
 }
